@@ -2,19 +2,19 @@
   grid_descriptor_fname           = 'inputdata/grid-descriptor-file/fv_0.9x1.25.nc'
   output_grid                     = 'fv_0.9x1.25'
   intermediate_cubed_sphere_fname = '../bin_to_cube/gmted2010_modis-ncube3000-stitch.nc' 
-  output_fname                    = 'output/fv_0.9x1.25_nc3000_Nsw042_Nrs008_Co060_Fi001_ZR_051716.nc'
+  output_fname                    = 'output/poop-nuts.nc'
   externally_smoothed_topo_file   = 'inputdata/externally-smoothed-PHIS/USGS-gtopo30_ne30np4_16xdel2.nc'
   lsmooth_terr = .false.
   lexternal_smooth_terr = .false.
   lzero_out_ocean_point_phis = .false.
   lzero_negative_peaks = .true.
   lsmooth_on_cubed_sphere = .true.
-  ncube_sph_smooth_coarse = 60
+  ncube_sph_smooth_coarse = 8
   ncube_sph_smooth_fine = 1
   ncube_sph_smooth_iter = 1
   lfind_ridges = .true.
   lridgetiles = .false.
-  nwindow_halfwidth = 42
-  nridge_subsample = 8
+  nwindow_halfwidth = 6
+  nridge_subsample = 2
 /
 

@@ -8,6 +8,8 @@ MODULE shared_vars
   real(r8), allocatable, dimension(:) :: landfrac_target, terr_target, sgh30_target, sgh_target
   real(r8), allocatable, dimension(:) :: landm_coslat_target, area_target
 
+  real(r8), allocatable, dimension(:) :: terr_uf_target, sgh_uf_target
+
   real(r8) , allocatable, dimension(:,:,:) :: terr_sm, terr_dev
 
   REAL    (r8):: pi, piq, pih, deg2rad, rotate_cube
@@ -129,6 +131,17 @@ subroutine allocate_target_vars(ntarget)
   allocate (sgh_target(ntarget),stat=alloc_error )
   if( alloc_error /= 0 ) then
     print*,'Program could not allocate space for sgh_target'
+    stop
+  end if
+
+  allocate (terr_uf_target(ntarget),stat=alloc_error )
+  if( alloc_error /= 0 ) then
+    print*,'Program could not allocate space for terr_uf_target'
+    stop
+  end if
+  allocate (sgh_uf_target(ntarget),stat=alloc_error )
+  if( alloc_error /= 0 ) then
+    print*,'Program could not allocate space for sgh_uf_target'
     stop
   end if
 

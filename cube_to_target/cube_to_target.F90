@@ -1,5 +1,3 @@
-!!#define REMOVEMEX
-!
 !  DATE CODED:   2011 to 2015
 !  DESCRIPTION:  Remap topo data from cubed-sphere grid to target grid using rigorous remapping
 !                (Lauritzen, Nair and Ullrich, 2010, J. Comput. Phys.)
@@ -8,7 +6,7 @@
 !
 program convterr
   use shr_kind_mod, only: r8 => shr_kind_r8
-  use subgrid_topo_ana
+  use smooth_topo_cube_sph
   use ridge_ana
   use shared_vars
   use reconstruct
@@ -54,6 +52,10 @@ program convterr
   integer :: jmax_segments,jall,jall_anticipated
   real(r8) :: tmp
   
+  real(r8), allocatable, dimension(:) :: tmp_var
+
+
+
   real(r8), allocatable, dimension(:,:) :: weights_all
   integer , allocatable, dimension(:,:) :: weights_eul_index_all
   integer , allocatable, dimension(:)   :: weights_lgr_index_all
@@ -98,12 +100,17 @@ program convterr
   !
   logical :: lzero_out_ocean_point_phis = .FALSE.
   !
+  !++jtb
+  logical :: lzero_negative_peaks = .FALSE.
+  !--jtb
+  !
   ! Cubed sphere terr is band-pass filtered using circular kernels
   !
   logical :: lsmooth_on_cubed_sphere = .FALSE.
   !                             *Radii* of smoothing circles
   integer :: ncube_sph_smooth_coarse = -1
   integer :: ncube_sph_smooth_fine   = -1
+  integer :: ncube_sph_smooth_iter   = -1
   !
   ! namelist variables for detection of sub-grid scale orientation
   ! i.e., "ridge finding"
@@ -131,19 +138,22 @@ program convterr
   !
   INTEGER :: UNIT
 
-  INTEGER :: NSCL_f, NSCL_c, nhalo,nsb,nsw
+  INTEGER :: NSCL_f, NSCL_c, nhalo,nsb,nsw, i_in_sg, itarget
+  integer, allocatable :: isg(:)
 
   character(len=1024) :: grid_descriptor_fname,intermediate_cubed_sphere_fname,output_fname,  externally_smoothed_topo_file
+  character(len=1024) :: output_grid, ofile$
   
   namelist /topoparams/ &
-       grid_descriptor_fname,intermediate_cubed_sphere_fname,output_fname, externally_smoothed_topo_file,&
+       grid_descriptor_fname,output_grid,intermediate_cubed_sphere_fname, &
+       output_fname, externally_smoothed_topo_file,&
        lsmooth_terr, lexternal_smooth_terr,lzero_out_ocean_point_phis, & 
-       lsmooth_on_cubed_sphere,lfind_ridges,lridgetiles, &
+       lsmooth_on_cubed_sphere,lfind_ridges,lridgetiles,lzero_negative_peaks, &
        !
        ! variables for interal smoothing of topography
        !
        ncube_coarse,norder,nmono,npd,ncube_sph_smooth_coarse,ncube_sph_smooth_fine, &
-       nwindow_halfwidth,nridge_subsample
+       ncube_sph_smooth_iter,nwindow_halfwidth,nridge_subsample
   
   UNIT=221
   OPEN( UNIT=UNIT, FILE="cube_to_target.nl" ) !, NML =  cntrls )
@@ -169,16 +179,25 @@ program convterr
    if (lsmooth_on_cubed_sphere) then
       NSCL_c = 2*ncube_sph_smooth_coarse
       NSCL_f = 2*ncube_sph_smooth_fine
-      nhalo  = NSCL_c ! 120      
+      nhalo  = NSCL_c  !*ncube_sph_smooth_iter ! 120      
 
       allocate( terr_sm(ncube,ncube,6)  )
       allocate( terr_dev(ncube,ncube,6) )
       allocate( terr_2(ncube,ncube,6)  )
-
-
-      call  smooth_intermediate_topo(terr, da, ncube,nhalo, NSCL_f,NSCL_c, terr_sm, terr_dev )
-
       terr_2 = reshape( terr,    (/ncube,ncube,6/) )
+
+
+      write(*,*) " SMOOTHING on CUBED SPHERE 10/7/15 "
+
+      ! This routine writes out an f77 unf file containing terr,terr_sm, and terr_dev
+
+      if (NSCL_c > 0) then
+         call  smooth_intermediate_topo(terr, da, ncube,nhalo, NSCL_f,NSCL_c, ncube_sph_smooth_iter , & 
+                                        terr_sm, terr_dev )
+      else
+         terr_dev = terr_2
+      endif
+
       volterr=0.
       volterr_sm=0.
       do np=1,6 
@@ -246,7 +265,20 @@ program convterr
         jall,ncube,ngauss,ntarget,ncorner,jmax_segments,target_corner_lon,target_corner_lat,nreconstruction)
    deallocate(target_corner_lon,target_corner_lat)
 
-  ! On exit from overlap_weights 'jall' is the correct number of cells in the exchange grid. 
+#if 0
+!++jtb dbg
+      write(*,*) " STARTING select sg "
+    ! do itarget=1,ntarget
+        allocate( isg(ncube*ncube*6) ) 
+        isg = paint_sg_field(terr,weights_eul_index_all(1:jall,:),weights_lgr_index_all(1:jall),&
+                      ncube,jall,ntarget,1)
+        write(*,*) itarget,ntarget
+     !end do
+      write(*,*) " DONE with select sg "
+!--jtb
+#endif
+
+ ! On exit from overlap_weights 'jall' is the correct number of cells in the exchange grid. 
 
    
   !*********************************************************
@@ -274,6 +306,7 @@ program convterr
     area_target        (i) = area_target(i) + wt
   end do
   write(*,*) "MIN/MAX area_target",MINVAL(area_target),MAXVAl(area_target)
+  write(*,*) "MIN/MAX target_area",MINVAL(target_area),MAXVAl(target_area)
 
   write(*,*) "Remapping landfrac"
   write(*,*) "MIN/MAX before remap:", MINVAL(landfrac), MAXVAL(landfrac)
@@ -284,6 +317,9 @@ program convterr
 
   write(*,*) "Remapping terrain"
   terr_target = remap_field(terr,area_target,weights_eul_index_all(1:jall,:),weights_lgr_index_all(1:jall),&
+       weights_all(1:jall,:),ncube,jall,nreconstruction,ntarget)
+  write(*,*) "MIN/MAX:", MINVAL(terr_target), MAXVAL(terr_target)
+  terr_uf_target = remap_field(terr,area_target,weights_eul_index_all(1:jall,:),weights_lgr_index_all(1:jall),&
        weights_all(1:jall,:),ncube,jall,nreconstruction,ntarget)
   write(*,*) "MIN/MAX:", MINVAL(terr_target), MAXVAL(terr_target)
 
@@ -416,6 +452,7 @@ program convterr
 
   if(lsmooth_on_cubed_sphere ) terr_target=0.0
   sgh_target=0.0
+  sgh_uf_target=0.0
   do counti=1,jall
     i    = weights_lgr_index_all(counti)!!
     !
@@ -439,6 +476,9 @@ program convterr
       sgh_target  (i) = sgh_target  (i) + wt*(terr_dev(ix,iy,ip))**2/area_target(i)
       terr_target (i) = terr_target (i) + wt*(terr_sm(ix,iy,ip))/area_target(i) 
     endif
+
+    sgh_uf_target(i) = sgh_uf_target(i)+wt*((terr_uf_target(i)-terr(ii))**2)/area_target(i)
+
   end do
 
 
@@ -447,7 +487,8 @@ program convterr
      call remapridge2target(area_target,target_center_lon,target_center_lat, & 
          weights_eul_index_all(1:jall,:), & 
          weights_lgr_index_all(1:jall),weights_all(1:jall,:),ncube,jall,&
-         nreconstruction,ntarget,nhalo,nsb)
+         nreconstruction,ntarget,nhalo,nsb,nsw, &
+         ncube_sph_smooth_coarse,ncube_sph_smooth_fine,lzero_negative_peaks)
 
         if (lridgetiles) then 
            call remapridge2tiles(area_target,target_center_lon,target_center_lat, & 
@@ -460,7 +501,7 @@ program convterr
 
   write(*,*) " !!!!!!!!  ******* maxval terr_target " , maxval(terr_target)
 
-
+       !!    if(lfind_ridges)  call paintridgeoncube ( ncube,nhalo,nsb,nsw , terr_dev )
 
   !
   ! zero out small values
@@ -482,14 +523,28 @@ program convterr
   WRITE(*,*) "min/max of var_target                    : ",MINVAL(sgh_target   ),MAXVAL(sgh_target   )
 
   DEALLOCATE(weights_all,weights_eul_index_all,terr)
+
+  if( (lfind_ridges) ) then
+       write( ofile$ , &
+       "('_nc',i0.4, '_Nsw',i0.3,'_Nrs',i0.3  &
+       '_Co',i0.3,'_Fi',i0.3)" ) & 
+        ncube, nsw, nsb,   ncube_sph_smooth_coarse   , ncube_sph_smooth_fine
+        if (.not.(lzero_negative_peaks) ) then
+           output_fname = './output/'//trim(output_grid)//trim(ofile$)//'.nc'
+        else
+           output_fname = './output/'//trim(output_grid)//trim(ofile$)//'_ZR.nc'
+        end if
+  end if
+
+
   
   write(*,*) " Model topo output file ",trim(output_fname)
   IF (ltarget_latlon) THEN
     CALL wrtncdf_rll(nlon,nlat,lpole,ntarget,terr_target,landfrac_target,sgh_target,sgh30_target,&
-         landm_coslat_target,target_center_lon,target_center_lat,.FALSE.,output_fname)
+         landm_coslat_target,target_center_lon,target_center_lat,.FALSE.,output_fname,lfind_ridges)
   ELSE
     CALL wrtncdf_unstructured(ntarget,terr_target,landfrac_target,sgh_target,sgh30_target,&
-         landm_coslat_target,target_center_lon,target_center_lat,target_area,output_fname)
+         landm_coslat_target,target_center_lon,target_center_lat,target_area,output_fname,lfind_ridges)
   END IF
   DEALLOCATE(terr_target,landfrac_target,sgh30_target,sgh_target,landm_coslat_target)
  
@@ -500,8 +555,10 @@ end program convterr
 !
 !
 !
-subroutine wrtncdf_unstructured(n,terr,landfrac,sgh,sgh30,landm_coslat,lon,lat,area,output_fname)
+subroutine wrtncdf_unstructured(n,terr,landfrac,sgh,sgh30,landm_coslat,lon,lat,area,output_fname,lfind_ridges)
   use shr_kind_mod, only: r8 => shr_kind_r8
+  use ridge_ana, only: nsubr, mxdis_target, mxvrx_target, mxvry_target, ang22_target, &
+                       anglx_target, aniso_target, anixy_target, hwdth_target, wghts_target 
   implicit none
   
 #     include         <netcdf.inc>
@@ -512,6 +569,7 @@ subroutine wrtncdf_unstructured(n,terr,landfrac,sgh,sgh30,landm_coslat,lon,lat,a
   integer, intent(in) :: n
   real(r8),dimension(n)  , intent(in) :: terr, landfrac,sgh,sgh30,lon, lat, landm_coslat,area  
   character(len=1024), intent(in) :: output_fname
+  logical, intent(in) :: lfind_ridges
   !
   ! Local variables
   !
@@ -521,6 +579,9 @@ subroutine wrtncdf_unstructured(n,terr,landfrac,sgh,sgh30,landm_coslat,lon,lat,a
   integer            :: latvid
   integer            :: terrid, areaid!,nid
   integer            :: landfracid,sghid,sgh30id,landm_coslatid
+
+  integer            :: mxdisid, ang22id, anixyid, anisoid, mxvrxid, mxvryid, hwdthid, wghtsid, anglxid
+
   integer            :: status    ! return value for error control of netcdf routin
 !  integer, dimension(2) :: nc_lat_vid,nc_lon_vid
   character (len=8)  :: datestring
@@ -543,6 +604,12 @@ subroutine wrtncdf_unstructured(n,terr,landfrac,sgh,sgh30,landm_coslat,lon,lat,a
   status = nf_def_dim (foutid, 'ncol', n, nid(1))
   if (status .ne. NF_NOERR) call handle_err(status)
   !
+
+  if (Lfind_ridges) then 
+     status = nf_def_dim (foutid, 'nrdg', nsubr, nid(2))
+     if (status .ne. NF_NOERR) call handle_err(status)
+  endif
+
   !
   !
   ! Create variable for output
@@ -575,6 +642,33 @@ subroutine wrtncdf_unstructured(n,terr,landfrac,sgh,sgh30,landm_coslat,lon,lat,a
   !status = nf_def_var (foutid,'lat', NF_DOUBLE, 1, latdim, latvid)!xxx
 
   if (status .ne. NF_NOERR) call handle_err(status)
+
+
+  if (Lfind_ridges) then 
+     status = nf_def_var (foutid,'MXDIS', NF_DOUBLE, 2, nid , mxdisid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'MXVRX', NF_DOUBLE, 2, nid , mxvrxid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'MXVRY', NF_DOUBLE, 2, nid , mxvryid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+
+     status = nf_def_var (foutid,'ANGLL', NF_DOUBLE, 2, nid , ang22id)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'ANGLX', NF_DOUBLE, 2, nid , anglxid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+
+     status = nf_def_var (foutid,'ANISO', NF_DOUBLE, 2, nid , anisoid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'ANIXY', NF_DOUBLE, 2, nid , anixyid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+
+     status = nf_def_var (foutid,'HWDTH', NF_DOUBLE, 2, nid , hwdthid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'WGHTS', NF_DOUBLE, 2, nid , wghtsid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+  endif
+
+
   
   !
   ! Create attributes for output variables
@@ -684,6 +778,58 @@ subroutine wrtncdf_unstructured(n,terr,landfrac,sgh,sgh30,landm_coslat,lon,lat,a
   if (status .ne. NF_NOERR) call handle_err(status)
   print*,"done writing lon data"
 
+
+  if (Lfind_ridges) then 
+     print*,"writing MXDIS data",MINVAL(mxdis_target),MAXVAL(mxdis_target)
+     status = nf_put_var_double (foutid, mxdisid, mxdis_target )
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing MXDIS data"
+
+     print*,"writing MXVRX  data",MINVAL(mxvrx_target),MAXVAL(mxvrx_target)
+     status = nf_put_var_double (foutid, mxvrxid, mxvrx_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing MXVRX data"
+
+     print*,"writing MXVRY  data",MINVAL(mxvry_target),MAXVAL(mxvry_target)
+     status = nf_put_var_double (foutid, mxvryid, mxvry_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing MXVRY data"
+
+     print*,"writing ANGLL data",MINVAL(ang22_target),MAXVAL(ang22_target)
+     status = nf_put_var_double (foutid, ang22id, ang22_target )
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing ANGLL data"
+
+     print*,"writing ANGLX  data",MINVAL(anglx_target),MAXVAL(anglx_target)
+     status = nf_put_var_double (foutid, anglxid, anglx_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing ANGLX data"
+
+     print*,"writing ANISO  data",MINVAL(aniso_target),MAXVAL(aniso_target)
+     status = nf_put_var_double (foutid, anisoid, aniso_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing ANISO data"
+
+     print*,"writing ANIXY  data",MINVAL(anixy_target),MAXVAL(anixy_target)
+     status = nf_put_var_double (foutid, anixyid, anixy_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing ANIXY data"
+
+     print*,"writing HWDTH  data",MINVAL(hwdth_target),MAXVAL(hwdth_target)
+     status = nf_put_var_double (foutid, hwdthid, hwdth_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing HWDTH data"
+
+     print*,"writing WGHTS  data",MINVAL(wghts_target),MAXVAL(wghts_target)
+     status = nf_put_var_double (foutid, wghtsid, wghts_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing WGHTS data"
+
+  endif
+
+
+
+
   !
   ! Close output file
   !
@@ -699,7 +845,14 @@ end subroutine wrtncdf_unstructured
 !**************************************************************     
 !
 subroutine wrtncdf_rll(nlon,nlat,lpole,n,terr_in,landfrac_in,sgh_in,sgh30_in,landm_coslat_in,lon,lat,&
-     lprepare_fv_smoothing_routine,output_fname)
+     lprepare_fv_smoothing_routine,output_fname,Lfind_ridges)
+
+  use ridge_ana, only: nsubr, mxdis_target, mxvrx_target, mxvry_target, ang22_target, &
+                       anglx_target, aniso_target, anixy_target, hwdth_target, wghts_target, & 
+                       clngt_target, cwght_target, count_target,riseq_target,grid_length_scale, &
+                       fallq_target
+
+  use shared_vars, only : terr_uf_target, sgh_uf_target, area_target
   use shr_kind_mod, only: r8 => shr_kind_r8
   implicit none
   
@@ -710,6 +863,7 @@ subroutine wrtncdf_rll(nlon,nlat,lpole,n,terr_in,landfrac_in,sgh_in,sgh30_in,lan
   !
   integer, intent(in) :: n,nlon,nlat
   character(len=1024), intent(in) :: output_fname
+  logical, intent(in) :: Lfind_ridges
   !
   ! lprepare_fv_smoothing_routine is to make a NetCDF file that can be used with the CAM-FV smoothing software
   !
@@ -721,10 +875,14 @@ subroutine wrtncdf_rll(nlon,nlat,lpole,n,terr_in,landfrac_in,sgh_in,sgh30_in,lan
   character (len=1024):: fout       ! NetCDF output file
   integer             :: foutid     ! Output file id
   integer             :: lonid, lonvid
-  integer             :: latid, latvid
+  integer             :: latid, latvid, nrdgid
   integer             :: terrid
   integer             :: landfracid,sghid,sgh30id,landm_coslatid
   integer             :: status    ! return value for error control of netcdf routin
+
+  integer             :: mxdisid, ang22id, anixyid, anisoid, mxvrxid, mxvryid, hwdthid, wghtsid, anglxid, gbxarid
+  integer             :: sghufid, terrufid, clngtid, cwghtid, countid,riseqid,fallqid
+
 !  integer, dimension(2) :: nc_lat_vid,nc_lon_vid
   character (len=8)   :: datestring
   real(r8), parameter :: fillvalue = 1.d36
@@ -733,6 +891,7 @@ subroutine wrtncdf_rll(nlon,nlat,lpole,n,terr_in,landfrac_in,sgh_in,sgh30_in,lan
   real(r8),dimension(nlon) :: lonar       ! longitude array
   real(r8),dimension(nlat) :: latar       ! latitude array
   
+  integer, dimension(3) :: rdgqdim
   integer, dimension(2) :: htopodim,landfdim,sghdim,sgh30dim,landmcoslatdim
   integer, dimension(1) :: londim,latdim
   real(r8),dimension(n) :: terr, landfrac,sgh,sgh30,landm_coslat
@@ -868,6 +1027,14 @@ subroutine wrtncdf_rll(nlon,nlat,lpole,n,terr_in,landfrac_in,sgh_in,sgh30_in,lan
   if (status .ne. NF_NOERR) call handle_err(status)
   status = nf_def_dim (foutid, 'lat', nlat, latid)
   if (status .ne. NF_NOERR) call handle_err(status)
+
+  if (Lfind_ridges) then 
+     status = nf_def_dim (foutid, 'nrdg', nsubr, nrdgid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+  endif
+
+
+
   !
   ! Create variable for output
   !
@@ -921,6 +1088,65 @@ subroutine wrtncdf_rll(nlon,nlat,lpole,n,terr_in,landfrac_in,sgh_in,sgh30_in,lan
   londim(1) = lonid
   status = nf_def_var (foutid,'lon', NF_DOUBLE, 1, londim, lonvid)
   if (status .ne. NF_NOERR) call handle_err(status)
+
+  if (Lfind_ridges) then 
+
+
+     status = nf_put_att_double (foutid,NF_GLOBAL,'grid_length_scale', NF_DOUBLE, 1, grid_length_scale )
+     if (status .ne. NF_NOERR) call handle_err(status)
+
+     rdgqdim(1) = lonid
+     rdgqdim(2) = latid
+     rdgqdim(3) = nrdgid
+
+     status = nf_def_var (foutid,'TERR_UF', NF_DOUBLE, 2, rdgqdim(1:2) , terrufid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'SGH_UF', NF_DOUBLE, 2, rdgqdim(1:2) , sghufid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'GBXAR', NF_DOUBLE, 2, rdgqdim(1:2) , gbxarid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+
+
+     status = nf_def_var (foutid,'MXDIS', NF_DOUBLE, 3, rdgqdim , mxdisid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+
+     status = nf_def_var (foutid,'RISEQ', NF_DOUBLE, 3, rdgqdim , riseqid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'FALLQ', NF_DOUBLE, 3, rdgqdim , fallqid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+
+
+     status = nf_def_var (foutid,'MXVRX', NF_DOUBLE, 3, rdgqdim , mxvrxid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'MXVRY', NF_DOUBLE, 3, rdgqdim , mxvryid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+
+     status = nf_def_var (foutid,'ANGLL', NF_DOUBLE, 3, rdgqdim , ang22id)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'ANGLX', NF_DOUBLE, 3, rdgqdim , anglxid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+
+     status = nf_def_var (foutid,'ANISO', NF_DOUBLE, 3, rdgqdim , anisoid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'ANIXY', NF_DOUBLE, 3, rdgqdim , anixyid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+
+     status = nf_def_var (foutid,'HWDTH', NF_DOUBLE, 3, rdgqdim , hwdthid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'WGHTS', NF_DOUBLE, 3, rdgqdim , wghtsid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'CLNGT', NF_DOUBLE, 3, rdgqdim , clngtid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'CWGHT', NF_DOUBLE, 3, rdgqdim , cwghtid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     status = nf_def_var (foutid,'COUNT', NF_DOUBLE, 3, rdgqdim , countid)
+     if (status .ne. NF_NOERR) call handle_err(status)
+  endif
+
+
+
+
+
 
   !
   ! Create attributes for output variables
@@ -1025,6 +1251,101 @@ subroutine wrtncdf_rll(nlon,nlat,lpole,n,terr_in,landfrac_in,sgh_in,sgh30_in,lan
   status = nf_put_var_double (foutid, lonvid, lonar)
   if (status .ne. NF_NOERR) call handle_err(status)
   print*,"done writing lon data"
+
+
+  if (Lfind_ridges) then 
+
+     print*,"writing MXDIS  data",MINVAL(mxdis_target),MAXVAL(mxdis_target)
+     status = nf_put_var_double (foutid, mxdisid, mxdis_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing MXDIS data"
+
+     print*,"writing RISEQ  data",MINVAL(riseq_target),MAXVAL(riseq_target)
+     status = nf_put_var_double (foutid, riseqid, riseq_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing RISEQ data"
+
+     print*,"writing FALLQ  data",MINVAL(fallq_target),MAXVAL(fallq_target)
+     status = nf_put_var_double (foutid, fallqid, fallq_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing FALLQ data"
+
+     print*,"writing MXVRX  data",MINVAL(mxvrx_target),MAXVAL(mxvrx_target)
+     status = nf_put_var_double (foutid, mxvrxid, mxvrx_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing MXVRX data"
+
+     print*,"writing MXVRY  data",MINVAL(mxvry_target),MAXVAL(mxvry_target)
+     status = nf_put_var_double (foutid, mxvryid, mxvry_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing MXVRY data"
+
+     print*,"writing ANGLL  data",MINVAL(ang22_target),MAXVAL(ang22_target)
+     status = nf_put_var_double (foutid, ang22id, ang22_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing ANGLL data"
+
+     print*,"writing ANGLX  data",MINVAL(anglx_target),MAXVAL(anglx_target)
+     status = nf_put_var_double (foutid, anglxid, anglx_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing ANGLX data"
+
+     print*,"writing ANISO  data",MINVAL(aniso_target),MAXVAL(aniso_target)
+     status = nf_put_var_double (foutid, anisoid, aniso_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing ANISO data"
+
+     print*,"writing ANIXY  data",MINVAL(anixy_target),MAXVAL(anixy_target)
+     status = nf_put_var_double (foutid, anixyid, anixy_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing ANIXY data"
+
+     print*,"writing WGHTS  data",MINVAL(wghts_target),MAXVAL(wghts_target)
+     status = nf_put_var_double (foutid, wghtsid, wghts_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing WGHTS data"
+
+     print*,"writing HWDTH  data",MINVAL(hwdth_target),MAXVAL(hwdth_target)
+     status = nf_put_var_double (foutid, hwdthid, hwdth_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing HWDTH data"
+
+     print*,"writing CLNGT  data",MINVAL(clngt_target),MAXVAL(clngt_target)
+     status = nf_put_var_double (foutid, clngtid, clngt_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing CLNGT data"
+
+     print*,"writing CWGHT  data",MINVAL(cwght_target),MAXVAL(cwght_target)
+     status = nf_put_var_double (foutid, cwghtid, cwght_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing CWGHT data"
+
+     print*,"writing COUNT  data",MINVAL(count_target),MAXVAL(count_target)
+     status = nf_put_var_double (foutid, countid, count_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing COUNT data"
+
+
+     print*,"writing TERR_UF  data",MINVAL(terr_uf_target),MAXVAL(terr_uf_target)
+     status = nf_put_var_double (foutid, terrufid, terr_uf_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing TERR_UF data"
+
+     print*,"writing SGH_UF  data",MINVAL(sgh_uf_target),MAXVAL(sgh_uf_target)
+     status = nf_put_var_double (foutid, sghufid, sgh_uf_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing SGH_UF data"
+
+     print*,"writing GBXAR  data",MINVAL(area_target),MAXVAL(area_target)
+     status = nf_put_var_double (foutid, gbxarid, area_target)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print*,"done writing GBXAR data"
+
+  endif
+
+
+
+
 
   !
   ! Close output file

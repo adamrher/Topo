@@ -8,7 +8,7 @@
 !
 !-----------------------------------------------------------------------------
 #define WRITERESULTS
-MODULE subgrid_topo_ana
+MODULE smooth_topo_cube_sph
   USE reconstruct
   !USE ridge_ana
 
@@ -21,11 +21,12 @@ PUBLIC smooth_intermediate_topo
 CONTAINS
 
 !=============================================================================
-  SUBROUTINE smooth_intermediate_topo(terr, da, ncube,nhalo, NSCL_f,NSCL_c,terr_sm,terr_dev )
+  SUBROUTINE smooth_intermediate_topo(terr, da, ncube,nhalo, NSCL_f,NSCL_c, SMITER &
+                                    , terr_sm,terr_dev )
 
     REAL (KIND=dbl_kind), PARAMETER :: pi        = 3.14159265358979323846264338327
 
-    INTEGER (KIND=int_kind), INTENT(IN) :: ncube, nhalo,NSCL_f,NSCL_c
+    INTEGER (KIND=int_kind), INTENT(IN) :: ncube, nhalo,NSCL_f,NSCL_c,SMITER
 
     REAL (KIND=dbl_kind), &
             DIMENSION(ncube,ncube,6), INTENT(INOUT) :: terr
@@ -54,7 +55,7 @@ CONTAINS
     REAL  (KIND=dbl_kind) ,                                                          &
          DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo, 6) :: terr_halo_rw
     REAL  (KIND=dbl_kind) ,                                                          &
-         DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo, 6) :: terr_halo_fx
+         DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo, 6) :: terr_halo_fx,terr_halo_fx_sv
     REAL  (KIND=dbl_kind) ,                                                          &
          DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo)    :: smwt,ggaa,ggbb,ggab
     REAL  (KIND=dbl_kind) ,                                          &
@@ -73,12 +74,12 @@ CONTAINS
     REAL(KIND=dbl_kind) :: RSM_scl, smoo,irho,volt0,volt1,volume_after,volume_before
 
 
-
+    CHARACTER(len=1024) :: ofile$
 
     
 
 
-write(*,*) " NCUBE !!! " , ncube
+    write(*,*) " NCUBE !!! " , ncube
 
     allocate( daxx(ncube,ncube,6) )
     DO np = 1, 6
@@ -137,9 +138,15 @@ write(*,*) " NCUBE !!! " , ncube
 
       terr_halo_fx = 0.0
 
+#ifdef DEBUGRIDGE
+      DO np=4,4
+        DO j=2500,3000
+        DO i=550,1350
+#else
       DO np=1,6
         DO j=1-nhalo+ns2,ncube+nhalo-ns2
         DO i=1-nhalo+ns2,ncube+nhalo-ns2
+#endif
            volt0  = terr_halo(i,j,np)*da_halo(i,j,np)
            volt1 = 0.
            do j2=-ns2,ns2
@@ -192,11 +199,24 @@ write(*,*) " NCUBE !!! " , ncube
       dalp   = alph(i00+ns2 )-alph(i00)
       diss00 = 1./sqrt(  ggaa(i00,i00)*dalp*dalp )
 
-      terr_halo_sm = 0.0
+      !terr_halo_sm    = 0.0
+      terr_halo_fx_sv = terr_halo_fx
 
+write(*,*) "LIMITS in smoother "
+write(*,*) 1-nhalo+ns2,ncube+nhalo-ns2
+
+
+      do ismi = 1,SMITER
+      terr_halo_sm =  0.0
+#ifdef DEBUGRIDGE
+      DO np=4,4
+        DO j=2500,3000
+        DO i=300,1100
+#else
       DO np=1,6
         DO j=1-nhalo+ns2,ncube+nhalo-ns2
         DO i=1-nhalo+ns2,ncube+nhalo-ns2
+#endif
            volt0  = terr_halo_fx(i,j,np)*da_halo(i,j,np)
            volt1 = 0.
            do j2=-ns2,ns2
@@ -226,29 +246,45 @@ write(*,*) " NCUBE !!! " , ncube
            end do
            end do
         END DO
-                if (mod(j,100) ==0 ) write(*,*) "One pass Crs Sm J = ",J, " Panel=",np
+                if (mod(j,1) ==0 ) write(*,*) "Crs Sm J = ",J, " Panel=",np," iter=",ismi
         END DO
       END DO
+      !terr_halo_fx =  terr_halo_sm
+          do np=1,6 
+             terr_sm (1:ncube,1:ncube,np) = terr_halo_sm(1:ncube,1:ncube,np )
+          end do
+          do np=1,6 
+             CALL CubedSphereFillHalo(terr_sm, terr_halo_fx, np, ncube+1,nhalo)  
+          end do
+      end do
 
       deallocate( wt1p )
       deallocate( terr_patch )
 
-#ifdef DEBUGGING
-write(711) size(terr_halo,1), size(terr_halo,2) ,size(terr_halo,3)
-write(711) ggaa,ggbb,ggab,alph,beta,da_halo
-WRITE(711) terr_halo
-WRITE(711) terr_halo_fx
-WRITE(711) terr_halo_sm
-#endif
-
 
   do np=1,6
-    terr_dev(1:ncube,1:ncube,np) = terr_halo_fx(1:ncube,1:ncube,np ) - terr_halo_sm(1:ncube,1:ncube,np )
+    terr_dev(1:ncube,1:ncube,np) = terr_halo_fx_sv(1:ncube,1:ncube,np ) - terr_halo_sm(1:ncube,1:ncube,np )
     terr_sm (1:ncube,1:ncube,np) = terr_halo_sm(1:ncube,1:ncube,np )
   end do
 
 
+
+
+       write( ofile$ , &
+       "('./output/topo_smooth_nc',i0.4,'_Co',i0.3,'_Fi',i0.3)" ) & 
+        ncube, NSCL_c/2, NSCL_f/2
+       ofile$= trim(ofile$)//'.dat'
+
+       OPEN (unit = 711, file= trim(ofile$) ,form="UNFORMATTED" )
+       write(711) ncube
+       WRITE(711) terr
+       WRITE(711) terr_sm
+       WRITE(711) terr_dev
+
+       close(711)
+   
+
 END SUBROUTINE smooth_intermediate_topo
 
 
-END MODULE subgrid_topo_ana
+END MODULE smooth_topo_cube_sph

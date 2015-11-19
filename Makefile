@@ -1,15 +1,9 @@
 #
 # COMPILER/MACHINE SETTINGS
 #
-machine=harmon
-machine=my_mac
-machine=yellowstone
-#FC = ifort
-#FC = gfortran
-FC=ifort
-#FC = nagfor
-#FC = pgf95
-DEBUG=FALSE
+include CompilerSupport.make
+DEBUG ?= FALSE
+
 #
 # Note: NO white spaces after variable assignment
 #
@@ -68,12 +62,12 @@ aniso=no_anisoSGH
 #
 # se_ne30np4-gtopo30_modis-cam_se_smooth-intermediate_ncube3000-no_anisoSGH.nc
 #
-#model=se
-#res=ne30np4
-#raw_data=gmted2010_modis
-#smoothing=julio_smooth
-#ncube=3000
-#aniso=julio_anisoSGH
+model=se
+res=ne30np4
+raw_data=gtopo30
+smoothing=julio_smooth
+ncube=540
+aniso=julio_anisoSGH
 
 #
 ###########################################################################################################################################

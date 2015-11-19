@@ -1,3 +1,4 @@
+#define SPEEDUPLOOP
 module ridge_ana
 
 use rotation 
@@ -11,23 +12,27 @@ private
 public find_ridges
 public remapridge2target
 public remapridge2tiles
+public paintridgeoncube
 
 public anglx_target,aniso_target,mxdis_target,hwdth_target
-public mxvrx_target,mxvry_target,bsvar_target,wghts_target 
-public ang22_target
+public mxvrx_target,mxvry_target,bsvar_target,wghts_target,riseq_target
+public ang22_target,anixy_target,clngt_target,cwght_target,count_target
+public nsubr,grid_length_scale,fallq_target
 
   REAL, allocatable  :: MXVRX(:,:,:),MXDIS(:,:,:),MNSLP(:,:,:),ANGLX(:,:,:),ANISO(:,:,:),XS(:),YS(:)
   REAL, allocatable  :: XSPK(:,:,:),YSPK(:,:,:),MXDS0(:,:,:),MXDS1(:,:,:),SFT0(:,:,:),SFT1(:,:,:)
   REAL, allocatable  :: PKHTS(:,:,:),VLDPS(:,:,:),RWPKS(:,:,:),RWVLS(:,:,:),ANGLL(:,:,:)
   REAL, allocatable  :: BSVAR(:,:,:),HWDTH(:,:,:),NPKS(:,:,:),NVLS(:,:,:),MXVRY(:,:,:)
-  REAL, allocatable  :: RISEQ(:,:,:),FALLQ(:,:,:)
+  REAL, allocatable  :: RISEQ(:,:,:),FALLQ(:,:,:),ANIXY(:,:,:),MXDSP(:,:,:),CLNGTH(:,:,:),MXDS2(:,:,:)
 
     REAL(KIND=dbl_kind), allocatable ::  ALP0(:,:),BET0(:,:),LAT0(:,:,:),LON0(:,:,:)
     REAL(KIND=dbl_kind), allocatable ::  ALP1(:,:),BET1(:,:),LAT1(:,:,:),LON1(:,:,:)
 
   real(r8), allocatable, dimension(:,:) :: anglx_target,aniso_target,mxdis_target,hwdth_target
   real(r8), allocatable, dimension(:,:) :: mxvrx_target,mxvry_target,bsvar_target,wghts_target 
-  real(r8), allocatable, dimension(:,:) :: ang22_target
+  real(r8), allocatable, dimension(:,:) :: ang22_target,anixy_target,clngt_target,cwght_target
+  real(r8), allocatable, dimension(:,:) :: count_target,riseq_target,fallq_target
+  !!,rwpks_target
 
     INTEGER (KIND=int_kind),allocatable :: UQRID(:,:,:) 
 
@@ -43,8 +48,10 @@ public ang22_target
 
     REAL, allocatable :: agnom(:),bgnom(:)
 
+    REAL(r8) :: grid_length_scale
 
     REAL (KIND=dbl_kind), PARAMETER :: pi        = 3.14159265358979323846264338327
+    REAL (KIND=dbl_kind), PARAMETER :: earth_radius        = 6371.0
 
     integer, parameter             ::   NANG=16
     integer, parameter             ::   NSUBR = NANG
@@ -64,10 +71,9 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsb, nsw )
 
 
     REAL (KIND=dbl_kind), &
-            DIMENSION(ncube-1,ncube-1,6), INTENT(IN) :: terr_dev
+            DIMENSION(ncube,ncube,6), INTENT(IN) :: terr_dev
     REAL (KIND=dbl_kind), &
-            DIMENSION(ncube-1,ncube-1,6), INTENT(IN) :: terr_raw
-
+            DIMENSION(ncube,ncube,6), INTENT(IN) :: terr_raw
 
        INTEGER (KIND=int_kind), INTENT(IN) :: ncube, nhalo, nsb, nsw
        INTEGER (KIND=int_kind) :: i,j,np,ncube_halo,ipanel,N,norx,nory,ip
@@ -115,8 +121,12 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsb, nsw )
        !beta(i) =  ( yv(i) - ncube/2 )*(pi/2.)/ncube
     END DO
 
+    grid_length_scale = ( alph(1)-alph(0) )*earth_radius
+
 
     write(*,*) "ALPHA(1:NCUBE) ",alph(1)*180./pi,alph(ncube)*180./pi
+
+    write(*,*) " GRID scale ",grid_length_scale
 
     allocate( agnom(ncube) )
     allocate( bgnom(ncube) )
@@ -150,18 +160,24 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsb, nsw )
    mxvry=0.
   allocate( mxdis( N/nsb , N/nsb , 6) )
    mxdis=0.
+  allocate( mxds2( N/nsb , N/nsb , 6) )
+   mxds2=0.
   allocate( anglx( N/nsb , N/nsb , 6) )
    anglx=-999.
   allocate( angll( N/nsb , N/nsb , 6) )
    angll=-999.
   allocate( aniso( N/nsb , N/nsb , 6) )
    aniso=0.
+  allocate( anixy( N/nsb , N/nsb , 6) )
+   anixy=0.
   allocate( mnslp( N/nsb , N/nsb , 6) )
    mnslp=0.
   allocate( xspk( N/nsb , N/nsb , 6) )
    xspk=0.
   allocate( yspk( N/nsb , N/nsb , 6) )
    yspk=0.
+  allocate( mxdsp( N/nsb , N/nsb , 6) )
+   mxdsp=0.
   allocate( mxds0( N/nsb , N/nsb , 6) )
    mxds0=0.
   allocate( mxds1( N/nsb , N/nsb , 6) )
@@ -190,6 +206,8 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsb, nsw )
    riseq=-1.
   allocate( fallq( N/nsb , N/nsb , 6) )
    fallq=1.
+  allocate( clngth( N/nsb , N/nsb , 6) )
+   clngth=1.
 
        norx= N/nsb !size(anglx,1)
        nory= N/nsb !size(anglx,1)
@@ -217,8 +235,11 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsb, nsw )
 
     dcube2 = 0.5 * ncube 
 
-
+#ifdef DEBUGRIDGE
+    do ipanel=4,4
+#else
     do ipanel=1,6   !1, 6
+#endif
        call ANISO_ANA( terr_dev_halo_r4(:,:,ipanel) , terr_halo_r4(:,:,ipanel) , XV , YV , ncube_halo ,NSB,NSW, ipanel )
 
 
@@ -270,6 +291,7 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsb, nsw )
 
     end do
 
+    hwdth = hwdth ! * grid_length_scale
 
 
 
@@ -278,7 +300,7 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsb, nsw )
     ofile$ = "TEST.dat"
     OPEN (unit = 31, file= trim(ofile$) ,form="UNFORMATTED" )
 
-    write(31) ncube_halo
+    write(31) ncube_halo , grid_length_scale
     write(31) xv,yv
     write(31) terr_halo_r4
     write(31) terr_dev_halo_r4
@@ -318,6 +340,9 @@ write(31) lat1
 write(31) uqrid
 write(31) riseq
 write(31) fallq
+write(31) clngth
+
+write(31) mxds2
 
    CLOSE(31)
 !!!STOP
@@ -336,51 +361,61 @@ end subroutine find_ridges
   REAL,               intent(IN)  ::  AA(N,N),X(N),Y(N),AARAW(N,N)
 
 
-  real, allocatable :: SUBA(:,:), SUBARW(:,:),SUBX(:),SUBY(:),RT(:,:),RTX(:),XRT(:),RTXMN(:),RTXSLP(:) 
+  real, allocatable :: SUBA(:,:), SUBARW(:,:),SUBX(:),SUBY(:),RT(:,:),RTX(:),XRT(:),RTXMN(:),RTXSLP(:),rtx_dt(:)
   real, allocatable :: PKLC(:), RTY(:),RTRW(:,:),RTRWX(:),DERTX(:),DERTY(:),CUSP(:),face(:)
+  real, allocatable :: silux(:), sillx(:), siluy(:), silly(:)
 
-  logical,allocatable :: lhgts(:)
+  logical,allocatable :: lhgts(:),lflats(:),lsides(:)
   logical :: Keep_Cuestas=.true.
   
 
   real :: THETRAD,PI,swt,ang,rotmn,rotvar,mnt,var,xmn,xvr,basmn,basvar,mn2,var2
-  integer :: i,j,l,m,n2,mini,maxi,minj,maxj,ns0,ns1,iorn(1),jj,ipkh(1),ift0(1),ift1(1),i2
+  integer :: i,j,l,m,n2,mini,maxi,minj,maxj,ns0,ns1,iorn(1),jj, &
+            ipkh(1),ivld(1),ift0(1),ift1(1),i2,ii,ipksv(1)
 
-  real :: vvaa(NANG),qual(NANG),dex(NANG),beta(NANG),alph,xpkh(NANG),ang00,dex0(nang),dex1(nang),xft0(NANG),xft1(NANG),HWDX(NANG)
+  real :: vvaa(NANG),qual(NANG),dex(NANG),beta(NANG),alph,xpkh(NANG),ang00
+  real :: dex0(nang),dex1(nang),xft0(NANG),xft1(NANG),HWDX(NANG),xvld(NANG)
         
-  real :: NPKX(NANG),NVLX(NANG),vva2(NANG),pkht(NANG),vldp(NANG),rwpk(NANG),rwvl(NANG),RISEX(NANG),FALLX(NANG)
+  real :: NPKX(NANG),NVLX(NANG),vva2(NANG),pkht(NANG),vldp(NANG),rwpk(NANG)
+  real :: rwvl(NANG),RISEX(NANG),FALLX(NANG),LNGTH(NANG) 
+  real :: dex_dt(NANG)
 
   ns0=nsw/2+1
-  ns1=ns0+nsw
-
-  
+  ns1=ns0+nsw+1
+ 
 
   PI = 2*ACOS(0.0)
 
 ! Allocate work arrays for ridge analysis
 !-----------------------------------------
-  allocate( suba( 2*nsw, 2*nsw ) )
-  allocate( subarw( 2*nsw, 2*nsw ) )
-  allocate( rt( 2*nsw, 2*nsw ) )
-  allocate( rtrw( 2*nsw, 2*nsw ) )
-  allocate( subx( 2*nsw  ) )
-  allocate( suby( 2*nsw  ) )
-  allocate( rtx( nsw  ) )
-  allocate( rty( nsw  ) )
-  allocate( cusp( nsw  ) )
-  allocate( dertx( nsw-1  ) )
-  allocate( derty( nsw-1  ) )
-  allocate( rtrwx( nsw  ) )
-  allocate( lhgts( nsw  ) )
-  allocate( rtxslp( nsw-1  ) )
-  allocate( pklc( 2:nsw-1  ) )
-  allocate( rtxmn( nsw  ) )
-  allocate( xrt( nsw  ) )
-  allocate( face( nsw  ) )
+  allocate( suba( 2*nsw+1, 2*nsw+1 ) )
+  allocate( subarw( 2*nsw+1, 2*nsw+1 ) )
+  allocate( rt( 2*nsw+1, 2*nsw+1 ) )
+  allocate( rtrw( 2*nsw+1, 2*nsw+1 ) )
+  allocate( subx( 2*nsw+1  ) )
+  allocate( suby( 2*nsw+1  ) )
+  allocate( rtx( nsw+1  ) )
+  allocate( rtx_dt( nsw+1  ) )
+  allocate( rty( nsw+1  ) )
+  allocate( cusp( nsw+1  ) )
+  allocate( dertx( nsw+1-1  ) )
+  allocate( derty( nsw+1-1  ) )
+  allocate( rtrwx( nsw+1  ) )
+  allocate( rtxslp( nsw+1-1  ) )
+  allocate( pklc( 2:nsw+1-1  ) )
+  allocate( rtxmn( nsw+1  ) )
+  allocate( xrt( nsw+1  ) )
+  allocate( face( nsw+1  ) )
 
+  allocate( silux( nsw+1  ) )
+  allocate( sillx( nsw+1  ) )
+  allocate( siluy( nsw+1  ) )
+  allocate( silly( nsw+1  ) )
 
+  allocate( Lhgts( nsw+1  ) )
+  allocate( Lflats( nsw+1  ) )
+  allocate( Lsides( nsw+1  ) )
 
-#if 1
 
   n2=n/2
   mini=nsw/nsb+1
@@ -431,21 +466,28 @@ end subroutine find_ridges
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-  do i=1,nsw
+  do i=1,nsw+1 
      xrt(i) = 1.*(i-1)
   end do
-  xmn=0.5*(xrt(1)+xrt(nsw))
-  xvr=sum( (xrt-xmn)**2 )/nsw
+  xmn=0.5*(xrt(1)+xrt(nsw+1))
+  xvr=sum( (xrt-xmn)**2 )/nsw+1
 
   do j=minj,maxj
-     suby = Y(j*nsb-nsw+1:j*nsb+nsw )
+     suby = Y(j*nsb-nsw  :j*nsb+nsw )
      ys(j)= sum( suby )/size(suby,1)
      do i=mini,maxi
-        subx = x(i*nsb-nsw+1:i*nsb+nsw )
+        subx = x(i*nsb-nsw  :i*nsb+nsw )
         xs(i)= sum( subx )/size(subx,1)
-        suba = AA( i*nsb-nsw+1:i*nsb+nsw ,  j*nsb-nsw+1:j*nsb+nsw )
+#ifdef DEBUGRIDGE
+        if ( (ys(j)>=2600).and.(ys(j)<=3000).and. &
+             (xs(i)>= 600).and.(xs(i)<=1300) ) then
+#endif
+        suba = AA( i*nsb-nsw  :i*nsb+nsw ,  j*nsb-nsw  :j*nsb+nsw )
 
-        subarw = AARAW( i*nsb-nsw+1:i*nsb+nsw ,  j*nsb-nsw+1:j*nsb+nsw )
+#ifdef SPEEDUPLOOP
+        if( (maxval(suba)-minval(suba))>1.0 ) then
+#endif
+        subarw = AARAW( i*nsb-nsw  :i*nsb+nsw ,  j*nsb-nsw  :j*nsb+nsw )
 
         basmn  =  sum( sum( suba(ns0:ns1-1,ns0:ns1-1) , 1 ), 1) /(( ns1-ns0 )*(ns1-ns0))
         basvar =  sum( sum( (suba(ns0:ns1-1,ns0:ns1-1)-basmn)**2 , 1 ), 1) /(( ns1-ns0 )*(ns1-ns0))
@@ -457,32 +499,54 @@ end subroutine find_ridges
         do l=1,nang
                                            ! Rotate 2D topography by ANG
            ang = (L-1)*(180./nang)
-           rt  = rotby3( suba, 2*nsw , ang )
-           rtrw  = rotby3( subarw, 2*nsw , ang )  ! Raw topo rotation
+           rt  = rotby3( suba, 2*nsw+1 , ang )
+           rtrw  = rotby3( subarw, 2*nsw+1 , ang )  ! Raw topo rotation
 
                                            ! Take "Y" (and "X")-average of rotated topography.
                                            ! Yields topo profile in X ==> RTX
            rtx = sum( rt(ns0:ns1-1,ns0:ns1-1) , 2 ) /( ns1-ns0 ) ! Y-average 
            rty = sum( rt(ns0:ns1-1,ns0:ns1-1) , 1 ) /( ns1-ns0 ) ! X-average
            rtrwx = sum( rtrw(ns0:ns1-1,ns0:ns1-1) , 2 ) /( ns1-ns0 ) ! Y-average of Raw topo
+
+#if 1 
+                                          ! "Silhouettes" in x and y
+           do m=ns0,ns1-1
+              silux(m-ns0+1) = maxval(  rt( m ,ns0:ns1-1) )
+              sillx(m-ns0+1) = minval(  rt( m ,ns0:ns1-1) )
+              siluy(m-ns0+1) = maxval(  rt( ns0:ns1-1, m) )
+              silly(m-ns0+1) = minval(  rt( ns0:ns1-1, m) )
+           end do
+#endif
+
                                            
                                            ! Mean elevation
            mnt = sum( rtx )/( ns1-ns0 ) 
            mn2 = sum( rty )/( ns1-ns0 ) 
 
-           rtxslp(1:nsw-1)=abs(rtx(2:nsw)-rtx(1:nsw-1) )                         
+
+
+                  ! Mean slope BETA (and intercept ALPH) of RTX
+           beta(L) = sum( (rtx-mnt)*(xrt-xmn) )/(nsw*xvr)           
+           alph    = mnt - beta(L)*xmn
+               ! subtract linear slope
+               do ii=1,nsw+1
+                  rtx_dt(ii) = rtx(ii) - ( alph+beta(L)*xrt(ii) )
+               end do
+
+
+           rtxslp(1:nsw)=abs(rtx(2:nsw+1)-rtx(1:nsw) )                         
   
 
                  ! count actual peaks and valleys in RTX cross section
            pklc = 0.
-           do i2=2,nsw-1
+           do i2=2,nsw
               if ( ( rtx(i2-1)<rtx(i2) ).and.( rtx(i2+1)<rtx(i2) ) ) pklc(i2)=1.
            end do
            npkx(L)=sum(pklc)
 
            pklc = 0.
-           do i2=2,nsw-1
-              if ( ( rtx(i2-1)>rtx(i2) ).and.( rtx(i2+1)>rtx(i2) ) ) pklc(i2)=1.
+           do i2=2,nsw
+             if ( ( rtx(i2-1)>rtx(i2) ).and.( rtx(i2+1)>rtx(i2) ) ) pklc(i2)=1.
            end do
            nvlx(L)=sum(pklc)
 
@@ -490,11 +554,11 @@ end subroutine find_ridges
                 ! Accumulate rising and falling segments
            risex(L)=0.
            fallx(L)=0.
-           do i2=2,nsw
+           do i2=2,nsw+1
               if ( rtx(i2-1)<=rtx(i2) ) risex(L) = risex(L) + ( rtx(i2) - rtx(i2-1) )
               if ( rtx(i2-1)>=rtx(i2) ) fallx(L) = fallx(L) + ( rtx(i2) - rtx(i2-1) )
            end do
-           do i2=2,nsw
+           do i2=2,nsw+1
               dertx(i2-1) = rtx(i2) - rtx(i2-1)
               derty(i2-1) = rty(i2) - rty(i2-1)
            end do
@@ -508,23 +572,31 @@ end subroutine find_ridges
 
 
 
-                  ! Mean slope BETA (and intercept ALPH) of RTX
-           beta(L) = sum( (rtx-mnt)*(xrt-xmn) )/(nsw*xvr)           
-           alph    = mnt - beta(L)*xmn
 
 
 
            var = sum( (rtx-mnt)**2 )/( ns1-ns0 ) 
            vvaa(L) = var
            dex(L)  = MAXVAL(RTX)-MINVAL(RTX)
+           dex_dt(L)  = MAXVAL(RTX_dt)-MINVAL(RTX_dt)
 
 
            var2 = sum( (rty-mn2)**2 )/( ns1-ns0 ) 
            vva2(L) = var2
 
            Lhgts = ( ( rtx - minval(rtx) ) > 0.5*maxval( rtx - minval(rtx) ) )
+           !hwdx(L) = 1.0*count( Lhgts )
 
-           hwdx(L) = 1.0*count( Lhgts )
+
+              ! flats = where slope is less than 33% of max
+           Lflats = ( abs(dertx) < 0.33*maxval( abs(dertx ) ) ) 
+           hwdx(L) = 1.0*(nsw+1 - count( Lflats ) )
+
+              ! sides = where sides are steeper than 20% of max
+           Lsides = ( abs(derty) > 0.2*maxval( abs(dertx ) ) ) 
+           lngth(L) = 1.0*(nsw+1 - count( Lsides ) )
+
+
 
 #if 0
            if (dex(L) > 1.0) then 
@@ -537,7 +609,23 @@ end subroutine find_ridges
 
            ipkh    = MAXLOC( RTX ) ! index of peak height in rotated topo avg cross-section
            xpkh(L) = XRT( ipkh(1) )-xmn
+           ivld    = MINLOC( RTX ) ! index of valley depth in rotated topo avg cross-section
+           xvld(L) = XRT( ivld(1) )-xmn
 
+
+           ! if ipkh is at or close to the edge of the profile
+           ! i.e., 1 or nsw, then is likely sloping terrain not
+           ! a real peak-y feature. Flag it by zeroing out npkx. 
+           ! Risks missing a true peak in the interior, but redundant
+           ! subsamples should help. Bigger risk is getting fooled
+           ! small (spurious) interior peak. 
+           if( ( ipkh(1) <= max( nsw/2-nsb,1) ).or. &
+               ( ipkh(1) >= min( nsw/2+nsb,nsw) ) ) then
+               npkx(L)=0.0
+           end if
+           
+ 
+           ipksv = ipkh
 
            ift0    = MINLOC( RTX( 1 : ipkh(1) ) )
            ift1    = MINLOC( RTX( ipkh(1) :  ) )+ipkh(1)-1
@@ -561,7 +649,7 @@ end subroutine find_ridges
            do i2=1,ipkh(1)
               cusp(i2) = rtx(ipkh(1)) + (rtx(1)-rtx(ipkh(1)))*(i2-ipkh(1))/(1-ipkh(1)) 
            end do
-           do i2=ipkh(1),nsw 
+           do i2=ipkh(1),nsw+1
               cusp(i2) = rtx(ipkh(1)) + (rtx(nsw)-rtx(ipkh(1)))*(i2-ipkh(1))/(nsw-ipkh(1)) 
            end do
  
@@ -575,10 +663,14 @@ end subroutine find_ridges
 
 
 
-           if ( (ip == 1) .and. ( i >= 29 ).and.( i <= 29) .and. ( j>=8 ) .and. (j<=13) ) then
+           !if ( (ip == 2) .and. ( i >= 39 ).and.( i <= 39) .and. ( j>=67 ) .and. (j<=67) ) then
+           !if ( (ip == 4) .and. ( i == 33 ).and.( j== 75 ) ) then
+           if ( (ip == 4) .and. (( i == 129 )).and.(( j== 341 ).or.(j==340)) ) then
                write(32) i,j,ip,nsw
-               write(32) ang, rt,rtx,subx,suby,rtrw,rtrwx,rty,dertx,derty,cusp,face,suba
-               write(32) vvaa(L),dex(L),risex(L),fallx(L),hwdx(L),vva2(L),qual(L),basvar,rotvar,npkx(L),nvlx(L)
+               write(32) ang, rt,rtx,subx,suby,rtrw,rtrwx,rty,dertx,derty,cusp,face,suba,subarw & 
+                        ,silux,sillx,siluy,silly,rtx_dt
+               write(32) vvaa(L),dex(L),risex(L),fallx(L),hwdx(L),vva2(L),qual(L),basvar,rotvar & 
+                        ,npkx(L),nvlx(L),pkht(L),vldp(L),lngth(L),xpkh(L),xvld(L),xmn,ipksv,ivld
            endif 
 
 
@@ -593,6 +685,7 @@ end subroutine find_ridges
         mxvrx(i,j,ip) = vvaa( iorn(1) ) !MAXVAL( vvaa )
         mxvry(i,j,ip) = vva2( iorn(1) ) !MAXVAL( vvaa )
         mxdis(i,j,ip) = dex( iorn(1) )
+        mxds2(i,j,ip) = dex_dt( iorn(1) )
         hwdth(i,j,ip) = hwdx( iorn(1) )
         npks(i,j,ip)  = npkx( iorn(1) )
         nvls(i,j,ip)  = nvlx( iorn(1) )
@@ -618,9 +711,15 @@ end subroutine find_ridges
 
         riseq(i,j,ip) = risex( iorn(1) )
         fallq(i,j,ip) = fallx( iorn(1) )
+        clngth(i,j,ip)= lngth( iorn(1) )
 
 
-
+#ifdef SPEEDUPLOOP
+      END IF 
+#endif
+#ifdef DEBUGRIDGE
+      END IF 
+#endif
      end do
          write(*,*) " J", j," out of ", N/nsb
   end do
@@ -670,9 +769,13 @@ endif
   deallocate( rtxmn)
   deallocate( xrt)
   deallocate( face)
+  deallocate( lflats)
+  deallocate( lsides)
+  deallocate( silux)
+  deallocate( siluy)
+  deallocate( sillx)
+  deallocate( silly)
 
-
-#endif
 
 write(*,*) "Got though ANISO ANA"
 
@@ -681,14 +784,16 @@ end subroutine ANISO_ANA
 !====================================
    subroutine remapridge2target(area_target,target_center_lon,target_center_lat,  &
          weights_eul_index_all,weights_lgr_index_all,weights_all,ncube,jall,&
-         nreconstruction,ntarget,nhalo,nsb)
+         nreconstruction,ntarget,nhalo,nsb,nsw,nsmcoarse,nsmfine,lzerovalley)
       use shr_kind_mod, only: r8 => shr_kind_r8
       use remap
+      use reconstruct !, only : EquiangularAllAreas
       implicit none
       real(r8), intent(in) :: weights_all(jall,nreconstruction)
       integer , intent(in) :: weights_eul_index_all(jall,3),weights_lgr_index_all(jall)
-      integer , intent(in) :: ncube,jall,nreconstruction,ntarget,nhalo,nsb
+      integer , intent(in) :: ncube,jall,nreconstruction,ntarget,nhalo,nsb,nsw,nsmcoarse,nsmfine
       real(r8), intent(in) :: area_target(ntarget),target_center_lon(ntarget),target_center_lat(ntarget)
+      logical, intent(in)  :: lzerovalley
       real(r8):: f(ntarget)
   
       REAL  ,                                                          &
@@ -696,13 +801,19 @@ end subroutine ANISO_ANA
       
       integer :: alloc_error
 
-      integer :: i,ix,iy,ip,ii,counti,norx,nory,i_last,isubr
+      integer :: i,ix,iy,ip,ii,counti,norx,nory,i_last,isubr,iip,j
       real(r8):: wt
       real(KIND=dbl_kind), dimension(1-nhalo:ncube+nhalo,1-nhalo:ncube+nhalo ,6) :: tmpx6
       real(KIND=dbl_kind), dimension(ncube*ncube*6) :: mxdisC , anglxC, anisoC, hwdthC
-      real(KIND=dbl_kind), dimension(ncube*ncube*6) :: mxvrxC , mxvryC, bsvarC
+      real(KIND=dbl_kind), dimension(ncube*ncube*6) :: mxvrxC , mxvryC, bsvarC, clngtC
+      real(KIND=dbl_kind), dimension(ncube*ncube*6) :: cwghtC , itrgtC, fallqC, riseqC, rwpksC
+      real(KIND=dbl_kind), dimension(ncube*ncube)   :: dA
 
+      CHARACTER(len=1024) :: ofile$
 !----------------------------------------------------------------------------------------------------
+
+    !!allocate ( dA(ncube,ncube),stat=alloc_error )
+    CALL EquiangularAllAreas(ncube, dA)
 
     DO i=1-nhalo,ncube+nhalo
        xv(i)=1.*i
@@ -721,6 +832,9 @@ end subroutine ANISO_ANA
     allocate (aniso_target(ntarget,nsubr),stat=alloc_error )
     if( alloc_error /= 0 ) then; print*,'Program could not allocate space for aniso_target'; stop; endif
     aniso_target = 0.
+    allocate (anixy_target(ntarget,nsubr),stat=alloc_error )
+    if( alloc_error /= 0 ) then; print*,'Program could not allocate space for anixy_target'; stop; endif
+    anixy_target = 0.
     allocate (mxvrx_target(ntarget,nsubr),stat=alloc_error )
     if( alloc_error /= 0 ) then; print*,'Program could not allocate space for mxvrx_target'; stop; endif
     mxvrx_target = 0.
@@ -733,10 +847,52 @@ end subroutine ANISO_ANA
     allocate (hwdth_target(ntarget,nsubr),stat=alloc_error )
     if( alloc_error /= 0 ) then; print*,'Program could not allocate space for hwdth_target'; stop; endif
     hwdth_target = 0.
+    allocate (clngt_target(ntarget,nsubr),stat=alloc_error )
+    if( alloc_error /= 0 ) then; print*,'Program could not allocate space for clngt_target'; stop; endif
+    clngt_target = 0.
+    allocate (cwght_target(ntarget,nsubr),stat=alloc_error )
+    if( alloc_error /= 0 ) then; print*,'Program could not allocate space for cwght_target'; stop; endif
+    cwght_target = 0.
+    allocate (count_target(ntarget,nsubr),stat=alloc_error )
+    if( alloc_error /= 0 ) then; print*,'Program could not allocate space for count_target'; stop; endif
+    count_target = 0.
+    allocate (riseq_target(ntarget,nsubr),stat=alloc_error )
+    if( alloc_error /= 0 ) then; print*,'Program could not allocate space for riseq_target'; stop; endif
+    riseq_target = 0.
+    allocate (fallq_target(ntarget,nsubr),stat=alloc_error )
+    if( alloc_error /= 0 ) then; print*,'Program could not allocate space for fallq_target'; stop; endif
+    fallq_target = 0.
 
      norx=size(mxdis,1)
      nory=size(mxdis,2)
 
+     itrgtC = 0.
+
+
+
+    if(lzerovalley)then
+      write(*,*) " will ZERO out negative peaks and 'Cuestas' "
+      do ip=1,6
+      do j=1,nory
+      do i=1,norx
+         if( (pkhts(i,j,ip)<0.1*mxdis(i,j,ip)).or.(npks(i,j,ip)<1.0) ) then
+           mxdis(i,j,ip)  = 0.
+           riseq(i,j,ip)  = 0.
+           fallq(i,j,ip)  = 0.
+           clngth(i,j,ip) = 0.
+         endif
+      end do
+      end do
+      end do
+    else
+      write(*,*) " Leave negative peaks ALONE "
+    endif
+
+ 
+
+
+
+#if 0
      tmpx6 = mapridge2cube ( mxdis , norx, nory,xs,ys,xv,yv,ncube,nhalo,nsb )
      mxdisC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
      tmpx6 = mapridge2cube ( anglx , norx, nory,xs,ys,xv,yv,ncube,nhalo,nsb )
@@ -751,7 +907,37 @@ end subroutine ANISO_ANA
      bsvarC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
      tmpx6 = mapridge2cube ( hwdth , norx, nory,xs,ys,xv,yv,ncube,nhalo,nsb )
      hwdthC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     clngtC = 0. 
+     cwghtC = 0. 
+#else
+     !where(pkhts < 0.)
+     !   mxdis = 0.
+     !endwhere
 
+        write(*,*) " about to call paintridge2cube "
+     tmpx6 = paintridge2cube ( mxdis ,  ncube,nhalo,nsb,nsw,lzerovalley )
+     mxdisC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     tmpx6 = paintridge2cube ( anglx ,  ncube,nhalo,nsb,nsw,lzerovalley )
+     anglxC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     tmpx6 = paintridge2cube ( aniso ,  ncube,nhalo,nsb,nsw,lzerovalley )
+     anisoC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     tmpx6 = paintridge2cube ( mxvrx ,  ncube,nhalo,nsb,nsw,lzerovalley )
+     mxvrxC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     tmpx6 = paintridge2cube ( mxvry ,  ncube,nhalo,nsb,nsw,lzerovalley )
+     mxvryC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     tmpx6 = paintridge2cube ( bsvar ,  ncube,nhalo,nsb,nsw,lzerovalley )
+     bsvarC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     tmpx6 = paintridge2cube ( hwdth ,  ncube,nhalo,nsb,nsw,lzerovalley )
+     hwdthC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     tmpx6 = paintridge2cube ( clngth ,  ncube,nhalo,nsb,nsw,lzerovalley, crest_length=.true. )
+     clngtC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     tmpx6 = paintridge2cube ( clngth ,  ncube,nhalo,nsb,nsw,lzerovalley, crest_weight=.true. )
+     cwghtC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     tmpx6 = paintridge2cube ( fallq ,  ncube,nhalo,nsb,nsw,lzerovalley )
+     fallqC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+     tmpx6 = paintridge2cube ( riseq ,  ncube,nhalo,nsb,nsw,lzerovalley )
+     riseqC = reshape( tmpx6(1:ncube, 1:ncube, 1:6 ) , (/ncube*ncube*6/) )
+#endif
 
        !mxdis_target = remap_field(tmp,area_target,weights_eul_index_all(1:jall,:),weights_lgr_index_all(1:jall),&
        !weights_all(1:jall,:),ncube,jall,nreconstruction,ntarget)
@@ -782,26 +968,40 @@ end subroutine ANISO_ANA
       ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
       wt = weights_all(counti,1)
 
+      iip=(iy-1)*ncube+ix
+
+      itrgtC(ii) = i
+
       isubr = INT( anglxC(ii) * nsubr/180. ) + 1
 
       if ( (isubr >= 1).and.(isubr <= nsubr) ) then
       wghts_target( i , isubr ) = wghts_target( i , isubr ) + wt
-      hwdth_target( i , isubr ) = hwdth_target( i , isubr ) + wt*hwdthC(ii)
-      mxvrx_target( i , isubr ) = mxvrx_target( i , isubr ) + wt*mxvrxC(ii)
-      mxvry_target( i , isubr ) = mxvry_target( i , isubr ) + wt*mxvryC(ii)
-      bsvar_target( i , isubr ) = bsvar_target( i , isubr ) + wt*bsvarC(ii)
-      mxdis_target( i , isubr ) = mxdis_target( i , isubr ) + wt*mxdisC(ii)
-      aniso_target( i , isubr ) = aniso_target( i , isubr ) + wt*anisoC(ii)
-      anglx_target( i , isubr ) = anglx_target( i , isubr ) + wt*anglxC(ii)
+      hwdth_target( i , isubr ) = hwdth_target( i , isubr ) + wt*hwdthC(ii) *cwghtC(ii)
+      mxvrx_target( i , isubr ) = mxvrx_target( i , isubr ) + wt*mxvrxC(ii) *cwghtC(ii)
+      mxvry_target( i , isubr ) = mxvry_target( i , isubr ) + wt*mxvryC(ii) *cwghtC(ii)
+      bsvar_target( i , isubr ) = bsvar_target( i , isubr ) + wt*bsvarC(ii) *cwghtC(ii)
+      mxdis_target( i , isubr ) = mxdis_target( i , isubr ) + wt*mxdisC(ii) *cwghtC(ii)
+      fallq_target( i , isubr ) = fallq_target( i , isubr ) + wt*fallqC(ii) *cwghtC(ii)
+      riseq_target( i , isubr ) = riseq_target( i , isubr ) + wt*riseqC(ii) *cwghtC(ii)
+      aniso_target( i , isubr ) = aniso_target( i , isubr ) + wt*anisoC(ii) *cwghtC(ii)
+      anglx_target( i , isubr ) = anglx_target( i , isubr ) + wt*anglxC(ii) *cwghtC(ii)
+      !! clngt_target( i , isubr ) = clngt_target( i , isubr ) + wt*clngtC(ii) *cwghtC(ii)
+      clngt_target( i , isubr ) = clngt_target( i , isubr ) + wt*cwghtC(ii)/dA(iip)
+      cwght_target( i , isubr ) = cwght_target( i , isubr ) + wt*cwghtC(ii) 
+      count_target( i , isubr ) = count_target( i , isubr ) + wt/dA(iip)
       endif
 
       i_last = i
     end do       
 
+    ! change width (and length) to km
+    hwdth_target = hwdth_target * grid_length_scale
+    clngt_target = clngt_target * grid_length_scale
 
+    ! Make fallq positive
+    fallq_target = -1.*fallq_target
 
-
-
+#if 0
     where( wghts_target > 1.e-15 )
         aniso_target = aniso_target / wghts_target
         anglx_target = anglx_target / wghts_target
@@ -813,14 +1013,43 @@ end subroutine ANISO_ANA
      elsewhere
         aniso_target = 0.
         anglx_target = -9000.
-        mxdis_target = -999.
+        mxdis_target = 0.
         hwdth_target = 0.
         mxvrx_target = 0.
         mxvry_target = 0.
         bsvar_target = 0.
      end where
+#else
+     where( cwght_target > 1.e-15 )
+        !clngt_target = clngt_target / cwght_target
+        mxdis_target = mxdis_target / cwght_target
+        fallq_target = fallq_target / cwght_target
+        riseq_target = riseq_target / cwght_target
+        aniso_target = aniso_target / cwght_target
+        anglx_target = anglx_target / cwght_target
+        hwdth_target = hwdth_target / cwght_target
+        mxvrx_target = mxvrx_target / cwght_target
+        mxvry_target = mxvry_target / cwght_target
+        bsvar_target = bsvar_target / cwght_target
+     elsewhere      
+        clngt_target = 0.
+        mxdis_target = 0.
+        riseq_target = 0.
+        fallq_target = 0.
+        aniso_target = 0.
+        anglx_target = -9000.
+        hwdth_target = 0.
+        mxvrx_target = 0.
+        mxvry_target = 0.
+        bsvar_target = 0.
+     end where
+#endif
 
 
+#if 1
+    anixy_target = mxvrx_target /( mxvrx_target + mxvry_target + 0.0001 )
+    !!anixy_target = 2.*( ( mxvrx_target /( mxvrx_target + mxvry_target + 0.0001) )-0.5 )
+#endif
      
 
      call importancesort (ntarget)
@@ -828,23 +1057,27 @@ end subroutine ANISO_ANA
      call latlonangles (target_center_lon,target_center_lat,ntarget)
 
 
+       write( ofile$ , &
+       "('./output/remap_nc',i0.4, '_Nsw',i0.3,'_Nrs',i0.3  &
+       '_Co',i0.3,'_Fi',i0.3)" ) & 
+        ncube, nsw, nsb, nsmcoarse, nsmfine
+       ofile$= trim(ofile$)//'.dat'
 
-      !real(r8), intent(in) :: weights_all(jall,nreconstruction)
-      !integer , intent(in) :: weights_eul_index_all(jall,3),weights_lgr_index_all(jall)
+       OPEN (unit = 911, file= trim(ofile$) ,form="UNFORMATTED" )
 
 write(911) ncube
-write(911) mxdisC,anglxC
+write(911) mxdisC
+write(911) mxvrxC
+write(911) mxvryC
+write(911) anglxC
+write(911) hwdthC
+write(911) cwghtC
+write(911) clngtC
+write(911) itrgtC
+write(911) fallqC
+write(911) riseqC
 
-write(911) ntarget,nsubr
-write(911) bsvar_target
-write(911) mxdis_target
-write(911) mxvrx_target
-write(911) mxvry_target
-write(911) anglx_target
-write(911) ang22_target
-write(911) aniso_target
-write(911) hwdth_target
-write(911) wghts_target
+close(911)
 
 
       write(*,*) " GOT OUT OF remapridge2target "
@@ -970,6 +1203,20 @@ write(911) wghts_target
      end do
 
      do JJ = 1,nsubr
+        tmp2(JJ) =  riseq_target(i,JJ)
+     end do
+     do JJ = 1,nsubr
+        riseq_target(i,JJ) = tmp2( insrt(JJ) )
+     end do
+
+     do JJ = 1,nsubr
+        tmp2(JJ) =  fallq_target(i,JJ)
+     end do
+     do JJ = 1,nsubr
+        fallq_target(i,JJ) = tmp2( insrt(JJ) )
+     end do
+
+     do JJ = 1,nsubr
         tmp2(JJ) =  bsvar_target(i,JJ)
      end do
      do JJ = 1,nsubr
@@ -981,6 +1228,13 @@ write(911) wghts_target
      end do
      do JJ = 1,nsubr
         aniso_target(i,JJ) = tmp2( insrt(JJ) )
+     end do
+
+     do JJ = 1,nsubr
+        tmp2(JJ) =  anixy_target(i,JJ)
+     end do
+     do JJ = 1,nsubr
+        anixy_target(i,JJ) = tmp2( insrt(JJ) )
      end do
 
      do JJ = 1,nsubr
@@ -1002,6 +1256,20 @@ write(911) wghts_target
      end do
      do JJ = 1,nsubr
         wghts_target(i,JJ) = tmp2( insrt(JJ) )
+     end do
+
+     do JJ = 1,nsubr
+        tmp2(JJ) =  cwght_target(i,JJ)
+     end do
+     do JJ = 1,nsubr
+        cwght_target(i,JJ) = tmp2( insrt(JJ) )
+     end do
+
+     do JJ = 1,nsubr
+        tmp2(JJ) =  clngt_target(i,JJ)
+     end do
+     do JJ = 1,nsubr
+        clngt_target(i,JJ) = tmp2( insrt(JJ) )
      end do
 
   end do
@@ -1043,9 +1311,162 @@ function mapridge2cube ( a, norx, nory,xs,ys,xv,yv,ncube,nhalo,nsb ) result( axc
 
 end function mapridge2cube
 
+!======================================
+
+function paintridge2cube ( axr, ncube,nhalo,nsb,nsw, lzerovalley, crest_length, crest_weight ) result( axc )
+   
+       integer, intent(in) :: ncube,nhalo,nsb,nsw
+       real, intent(in), dimension( size(xs) , size(ys) ,6) :: axr
+       logical, intent(in) :: lzerovalley
+       logical, optional, intent(in) :: crest_length
+       logical, optional, intent(in) :: crest_weight
+
+       real(KIND=dbl_kind), dimension(1-nhalo:ncube+nhalo,1-nhalo:ncube+nhalo ,6) :: axc
+       real(KIND=dbl_kind), dimension(1-nhalo:ncube+nhalo,1-nhalo:ncube+nhalo ,6) :: qc
+       real, dimension(-nsw:nsw,-nsw:nsw) :: suba,sub1
+       real, dimension(-nsw:nsw,-nsw:nsw) :: subr,subq,subdis
+       real, dimension(-nsw:nsw)          :: xq,yq
+       real :: rotangl,dsq,ssq
+       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,norx,nory,nql,ncl,nhw
+       logical :: lcrestln,lcrestwt
+!---------------------------------------------------
+
+    if(present(crest_length)) then
+      lcrestln = crest_length
+    else
+       lcrestln = .false.
+    endif
+    if(present(crest_weight)) then
+      lcrestwt = crest_weight
+    else
+       lcrestwt = .false.
+    endif
+
+    DO i=-nsw,nsw
+       xq(i)=i
+       yq(i)=i
+    END DO
+ 
+
+  ns0=nsw/2+1
+  ns1=ns0+nsw
+
+     norx=size(mxdis,1)
+     nory=size(mxdis,2)
 
 
 
+  if ( .not.(Lcrestln) ) then
+   suba(:,:)=0.
+   suba( -nsw/4-1:nsw/4+1 , -nsw/2-1:nsw/2+1 ) = 1.
+   !else 
+   ! suba( 0 , -nsw/2-1:nsw/2+1 ) = 1.
+  endif  
+
+  sub1(:,:)=0.
+  nql = INT( nsw/1.0 )
+    DO j=-nsw,nsw
+    DO i=-nsw,nsw
+       ssq= xq(i)**2+yq(j)**2
+       if (SSQ < nql) sub1(i,j)=1.0
+    END DO
+    END DO
+ 
+  axc = 0.
+  qc  = 0.
+
+#ifdef DEBUGRIDGE
+     do ip=4,4
+#else
+     do ip=1,6
+#endif
+       do j=1,nory
+         do i=1,norx
+#ifdef DEBUGRIDGE
+        if ( (ys(j)>=2600).and.(ys(j)<=3000).and. &
+             (xs(i)>= 600).and.(xs(i)<=1300) ) then
+#endif
+        if(mxdis(i,j,ip)>=1.0) then
+
+             if(Lcrestwt) then
+               suba(:,:) = 0.
+               ncl  = MIN( INT(clngth(i,j,ip)/2) , nsw/2 )
+               suba( 0 , -ncl:ncl ) = 1.        
+               rotangl = - anglx(i,j,ip) 
+               subr = rotby3( suba , 2*nsw+1, rotangl )
+               subdis = subr  ! * axr(i,j,ip)
+             end if
+             if(Lcrestln) then
+               suba(:,:) = 0.
+               ncl  = MIN( INT(clngth(i,j,ip)/2) , nsw/2 )
+               suba( 0 , -ncl:ncl ) = 1.        
+               rotangl = - anglx(i,j,ip) 
+               subr = rotby3( suba , 2*nsw+1, rotangl )
+               subdis = subr * axr(i,j,ip)
+             end if
+             if( (.not.(Lcrestln)).and.(.not.(Lcrestwt)) ) then
+               suba(:,:) = 0.
+               ncl  = MIN( INT(clngth(i,j,ip)/2) , nsw/2 )
+               nhw  = MIN( INT(hwdth(i,j,ip)/2) , nsw/2 )
+               !suba( -nhw:nhw , -ncl:ncl ) = 1.        
+               suba( 0 , -ncl:ncl ) = 1.        
+               rotangl = - anglx(i,j,ip) 
+               subr = rotby3( suba , 2*nsw+1, rotangl )
+               subdis = subr * axr(i,j,ip)
+             endif
+
+
+
+             dsq    = 1.0 - SQRT( (xs(i)-xspk(i,j,ip))**2 + (ys(j)-yspk(i,j,ip))**2 )/nsw
+             subq   = sub1 * dsq
+
+                do jj = -NSW/2,NSW/2
+                do ii = -NSW/2,NSW/2
+                    x0 = INT( xspk(i,j,ip) ) + 1
+                    y0 = INT( yspk(i,j,ip) ) + 1
+                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
+                       !if ( AXC( x0+ii, y0+jj, ip ) < subdis(ii,jj) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
+                    endif
+                end do
+                end do
+       end if
+ 
+#ifdef DEBUGRIDGE
+       end if
+#endif
+          end do
+       end do
+     end do
+
+     write(*,*) " finished paintridge2cube "
+     
+  end function paintridge2cube
+
+
+!======================================
+subroutine paintridgeoncube ( ncube,nhalo,nsb,nsw , terr  )
+   
+       integer, intent(in) :: ncube,nhalo,nsb,nsw
+       REAL (KIND=dbl_kind), &
+            DIMENSION(ncube,ncube,6), INTENT(IN) :: terr
+
+       real(KIND=dbl_kind), dimension(1-nhalo:ncube+nhalo,1-nhalo:ncube+nhalo ,6) :: axc
+       logical :: lzero=.false.
+!---------------------------------------------------
+
+     mxdsp = mxdis
+     where( pkhts < 0)
+       mxdsp=0.
+     end where
+     axc =  paintridge2cube ( mxdsp , ncube,nhalo,nsb,nsw,lzero )
+
+     write(411) ncube
+     write(411) axc(1:ncube,1:ncube,:)
+     write(411) terr
+
+  end subroutine paintridgeoncube
 
 !====================================
    subroutine remapridge2tiles(area_target,target_center_lon,target_center_lat,  &
