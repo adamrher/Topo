@@ -1,6 +1,6 @@
 &topoparams
-  grid_descriptor_fname           = 'inputdata/grid-descriptor-file/$argv[1].nc'
-  intermediate_cubed_sphere_fname = '../bin_to_cube/$argv[2]-ncube$argv[4].nc'
+  grid_descriptor_fname           = 'inputdata/grid-descriptor-file/fv_0.9x1.25.nc'
+  intermediate_cubed_sphere_fname = '../bin_to_cube/gmted2010_modis-ncube3000.nc'
   output_fname                    = 'output/$argv[1]-$argv[2]-$argv[3]-intermediate_ncube$argv[4]-$argv[5].nc'
   externally_smoothed_topo_file   = '../cam_fv_topo-smoothing/$argv[2]-$argv[1]-$argv[3].nc'
   lsmooth_terr                    = .true.

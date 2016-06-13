@@ -4,9 +4,6 @@
 include CompilerSupport.make
 DEBUG ?= FALSE
 
-#
-# Note: NO white spaces after variable assignment
-#
 # STANDARD CONGIGURATIONS
 #
 # fv0.9x1.25-gmted2010_modis-cam_fv_smooth-intermediate_ncube3000-no_anisoSGH.nc
@@ -31,7 +28,6 @@ aniso=no_anisoSGH
 #
 #model=fv
 #res=0.9x1.25
-#raw_data=gmted2010_modis
 #smoothing=cam_fv_smooth
 #ncube=3000
 #aniso=no_anisoSGH
@@ -70,19 +66,10 @@ ncube=540
 aniso=julio_anisoSGH
 
 #
-###########################################################################################################################################
-# DONE CASE DEFINITION # DONE CASE DEFINITION # DONE CASE DEFINITION # DONE CASE DEFINITION # DONE CASE DEFINITION # DONE CASE DEFINITION #
-###########################################################################################################################################
-#
-ifeq ($(machine),my_mac)
-  python_command:=~pel/anaconda/bin/python
-else
-  python_command:=python
-endif
-cr:=create_netCDF_from_rawdata
-sm:=cam_fv_topo-smoothing
+cr := create_netCDF_from_rawdata
+sm := cam_fv_topo-smoothing
 
-all: cube_to_target plot
+all: comp_check cube_to_target plot
 rawdata: raw_netCDF_$(raw_data) 
 bin_to_cube: bin_to_cube/$(raw_data)-ncube$(ncube).nc raw_netCDF_$(raw_data)
 cube_to_target: bin_to_cube/$(raw_data)-ncube$(ncube).nc cube_to_target/output/$(model)_$(res)-$(raw_data)-$(smoothing)-intermediate_ncube$(ncube)-$(aniso).nc
@@ -103,13 +90,13 @@ cube_to_target: cube_to_target/output/$(model)_$(res)-$(raw_data)-$(smoothing)-i
 cube_to_target/output/fv_$(res)-$(raw_data)-$(smoothing)-intermediate_ncube$(ncube)-$(aniso).nc: bin_to_cube/$(raw_data)-ncube$(ncube).nc cam_fv_topo-smoothing/$(raw_data)-$(model)_$(res)-$(smoothing).nc
 	echo cube_to_target/$(model)_$(res)-$(raw_data)-$(smoothing)-intermediate_ncube$(ncube)-$(aniso).nc
 	echo ./run.sh $(model)_$(res) $(raw_data) $(smoothing) $(ncube) $(aniso)
-	(cd cube_to_target; make; chmod +x run.sh; rm cube_to_target.nl; ./run.sh $(model)_$(res) $(raw_data) $(smoothing) $(ncube) $(aniso))
+	(cd cube_to_target; $(MAKE); chmod +x run.sh; rm cube_to_target.nl; ./run.sh $(model)_$(res) $(raw_data) $(smoothing) $(ncube) $(aniso))
 
 
 cube_to_target/output/se_$(res)-$(raw_data)-$(smoothing)-intermediate_ncube$(ncube)-$(aniso).nc: bin_to_cube/$(raw_data)-ncube$(ncube).nc
 	echo cube_to_target/$(model)_$(res)-$(raw_data)-$(smoothing)-intermediate_ncube$(ncube)-$(aniso).nc
 	echo ./run.sh $(model)_$(res) $(raw_data) $(smoothing) $(ncube) $(aniso)
-	(cd cube_to_target; make; chmod +x run.sh; rm cube_to_target.nl; ./run.sh $(model)_$(res) $(raw_data) $(smoothing) $(ncube) $(aniso))
+	(cd cube_to_target; $(MAKE); chmod +x run.sh; rm cube_to_target.nl; ./run.sh $(model)_$(res) $(raw_data) $(smoothing) $(ncube) $(aniso))
 
 
 cesm_compliance:
@@ -124,7 +111,7 @@ cesm_compliance:
 #
 cam_fv_smooth:  cam_fv_topo-smoothing/$(raw_data)-$(model)_$(res)-$(smoothing).nc
 cam_fv_topo-smoothing/$(raw_data)-$(model)_$(res)-$(smoothing).nc: $(sm)/input/10min-$(raw_data)-phis-raw.nc
-	(cd $(sm)/definesurf; make; ./definesurf -t ../input/10min-$(raw_data)-phis-raw.nc  -g ../input/outgrid/$(model)_$(res).nc -l ../input/landm_coslat.nc -remap ../$(raw_data)-$(model)_$(res)-$(smoothing).nc)
+	(cd $(sm)/definesurf; $(MAKE); ./definesurf -t ../input/10min-$(raw_data)-phis-raw.nc  -g ../input/outgrid/$(model)_$(res).nc -l ../input/landm_coslat.nc -remap ../$(raw_data)-$(model)_$(res)-$(smoothing).nc)
 cam_fv_topo-smoothing/input/10min-gmted2010_modis-phis-raw.nc: create_netCDF_from_rawdata/gmted2010_modis-rawdata.nc
 	(cd $(sm)/input; ncl < make-10min-raw-phis.ncl 'gmted2010_modis=True')
 cam_fv_topo-smoothing/input/10min-gtopo30-phis-raw.nc: create_netCDF_from_rawdata/gtopo30-rawdata.nc
@@ -184,123 +171,3 @@ bin_to_cube/$(raw_data)-ncube$(ncube).nc: create_netCDF_from_rawdata/$(raw_data)
 	(cd bin_to_cube; make; chmod +x run.sh; rm bin_to_cube.nl; ./run.sh $(raw_data) $(ncube))
 test:
 	echo bin_to_cube/$(raw_data)-ncube$(ncube).nc
-#
-#=====================================================================================================================
-#
-# user settings (compiler)
-#
-export FC
-
- # default settings
-# LIB_NETCDF := /opt/local/lib
-# INC_NETCDF := /opt/local/include
-
-#
-#------------------------------------------------------------------------
-# ifort
-#------------------------------------------------------------------------
-#
-ifeq ($(FC),ifort)
-  FFLAGS = -c -g -r8 -O1 -I$(INC_NETCDF)
-  LDFLAGS = -L$(LIB_NETCDF) -lnetcdf
-endif
-
-
-#------------------------------------------------------------------------
-# GFORTRAN
-#------------------------------------------------------------------------
-#
-ifeq ($(FC),gfortran)
-  ifeq ($(machine),my_mac)
-    INC_NETCDF := /opt/local/include
-    LIB_NETCDF := /opt/local/lib
-  endif
-  ifeq ($(machine),harmon)
-    INC_NETCDF :=/usr/local/netcdf-gcc-g++-gfortran/include
-    LIB_NETCDF :=/usr/local/netcdf-gcc-g++-gfortran/lib
-  endif
-
-  LDFLAGS = -L$(LIB_NETCDF) -lnetcdf -lnetcdff 
-  FFLAGS   := -c  -fdollar-ok  -I$(INC_NETCDF)
-
-  ifeq ($(DEBUG),TRUE)
-#   FFLAGS += --chk aesu  -Cpp --trace
-    FFLAGS += -Wall -fbacktrace -fbounds-check -fno-range-check
-  else
-    FFLAGS += -O
-  endif
-
-endif
-
-#------------------------------------------------------------------------
-# NAG
-#------------------------------------------------------------------------
-ifeq ($(FC),nagfor)
-
-#  INC_NETCDF :=/usr/local/netcdf-gcc-nag/include
-#  LIB_NETCDF :=/usr/local/netcdf-pgi/lib
-
-  INC_NETCDF :=/usr/local/netcdf-gcc-nag/include
-  LIB_NETCDF :=/usr/local/netcdf-gcc-nag/lib
-
-  LDFLAGS = -L$(LIB_NETCDF) -lnetcdf -lnetcdff
-  FFLAGS   := -c  -I$(INC_NETCDF)
-
-
-  ifeq ($(DEBUG),TRUE)
-    FFLAGS += -g -C
-  else
-    FFLAGS += -O
-  endif
-
-endif
-
-#------------------------------------------------------------------------
-# PGF95
-#------------------------------------------------------------------------
-#
-# setenv LD_LIBRARY_PATH ${LD_LIBRARY_PATH}:/usr/local/netcdf-4.1.3-gcc-4.4.4-13-lf9581/lib
-#
-
-ifeq ($(FC),pgf95)
-  INC_NETCDF :=/opt/local/include
-  LIB_NETCDF :=/opt/local/lib
-
-  LDFLAGS = -L$(LIB_NETCDF) -lnetcdf -lnetcdff
-  FFLAGS   := -c -Mlarge_arrays -I$(INC_NETCDF)
-
-
-  ifeq ($(DEBUG),TRUE)
-    FFLAGS += -g -Mbounds -traceback -Mchkfpstk
-  else
-    FFLAGS += -O
-  endif
-
-endif
-#------------------------------------------------------------------------
-# ifort
-#------------------------------------------------------------------------
-#
-
-ifeq ($(FC),ifort)
-  INC_NETCDF :=${NETCDF}/include
-  LIB_NETCDF :=${NETCDF}/lib
-
-#  LDFLAGS = -L$(LIB_NETCDF) -lnetcdf -lnetcdff
-  FFLAGS   := -c -I$(INC_NETCDF)
-
-
-  ifeq ($(DEBUG),TRUE)
-    FFLAGS += -g -Mbounds -traceback -Mchkfpstk
-  else
-    FFLAGS += -O
-  endif
-
-endif
-
-
-export INC_NETCDF
-export LIB_NETCDF
-export LDFLAGS
-export FFLAGS
-

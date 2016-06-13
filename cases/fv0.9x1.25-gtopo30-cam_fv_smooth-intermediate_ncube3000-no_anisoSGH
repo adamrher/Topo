@@ -1,8 +1,8 @@
-# fv0.9x1.25-gmted2010_modis-cam_fv_smooth-intermediate_ncube3000-no_anisoSGH.nc
+# fv0.9x1.25-gtopo30-cam_fv_smooth-intermediate_ncube3000-no_anisoSGH.nc
 #
 model     := fv
 res       := 0.9x1.25
-raw_data  := gmted2010_modis
+raw_data  := gtopo30
 smoothing := cam_fv_smooth
 ncube     := 3000
 aniso     := no_anisoSGH
